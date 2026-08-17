@@ -4,6 +4,7 @@ import logging
 import asyncio
 from telegram import Bot
 from telegram.error import TelegramError
+from deep_translator import GoogleTranslator
 
 # Настройка логирования
 logging.basicConfig(
@@ -18,6 +19,44 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 
 APOD_URL = 'https://api.nasa.gov/planetary/apod'
+
+# Инициализация переводчика
+translator = GoogleTranslator(source='en', target='ru')
+
+
+def translate_text(text, max_length=4500):
+    """Перевести текст на русский с защитой от лимитов"""
+    if not text:
+        return ""
+    
+    try:
+        # Google Translate имеет лимит ~5000 символов за раз
+        if len(text) > max_length:
+            # Разбиваем на части и переводим по частям
+            parts = []
+            current_part = ""
+            
+            for sentence in text.replace('\n', ' ').split('. '):
+                if len(current_part) + len(sentence) < max_length:
+                    current_part += sentence + '. '
+                else:
+                    if current_part:
+                        parts.append(current_part.strip())
+                    current_part = sentence + '. '
+            
+            if current_part:
+                parts.append(current_part.strip())
+            
+            # Переводим каждую часть
+            translated_parts = [translator.translate(part) for part in parts]
+            return ' '.join(translated_parts)
+        else:
+            return translator.translate(text)
+            
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка перевода: {e}. Используем оригинальный текст.")
+        return text
+
 
 def get_apod():
     """Получить Astronomy Picture of the Day"""
@@ -35,8 +74,9 @@ def get_apod():
         logger.error(f"Ошибка получения APOD: {e}")
         return None
 
+
 def main():
-    logger.info("🚀 Запуск NASA Telegram бота (строго фото)")
+    logger.info("🚀 Запуск NASA Telegram бота (строго фото + перевод)")
     
     # Проверка наличия всех ключей
     if not all([NASA_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID]):
@@ -53,24 +93,31 @@ def main():
         logger.warning(f"⚠️ Сегодняшний APOD не является фото (тип: {apod_data.get('media_type')}). Пропускаем.")
         return False
     
-    title = apod_data.get('title', 'Без названия')
-    explanation = apod_data.get('explanation', '')
+    # Получаем оригинальные данные
+    title_en = apod_data.get('title', 'Без названия')
+    explanation_en = apod_data.get('explanation', '')
     date = apod_data.get('date', '')
     image_url = apod_data.get('url')
     copyright_info = apod_data.get('copyright')
 
-    logger.info(f"📸 Получено фото APOD: {title}")
+    logger.info(f"📸 Получено фото APOD: {title_en}")
 
-    # Формируем пост (Вариант 1)
-    caption = f"🌌 <b>{title}</b>\n\n"
+    # Переводим на русский
+    title_ru = translate_text(title_en)
+    explanation_ru = translate_text(explanation_en)
+
+    logger.info(f"🔄 Переведено: {title_ru}")
+
+    # Формируем пост на русском
+    caption = f"🌌 <b>{title_ru}</b>\n\n"
     
     # Защита от превышения лимита Telegram (1024 символа для подписи к фото)
     max_len = 900
-    if len(explanation) > max_len:
-        # Обрезаем по последнему пробелу, чтобы не резать слово, и добавляем ссылку
-        explanation = explanation[:max_len].rsplit(' ', 1)[0] + "...\n\n🔗 Полный текст на сайте NASA"
+    if len(explanation_ru) > max_len:
+        # Обрезаем по последнему пробелу, чтобы не резать слово
+        explanation_ru = explanation_ru[:max_len].rsplit(' ', 1)[0] + "..."
     
-    caption += f"{explanation}\n\n"
+    caption += f"{explanation_ru}\n\n"
     caption += f"📅 {date}"
     
     if copyright_info:
@@ -91,6 +138,7 @@ def main():
     except TelegramError as e:
         logger.error(f"Ошибка Telegram: {e}")
         return False
+
 
 if __name__ == '__main__':
     success = main()
