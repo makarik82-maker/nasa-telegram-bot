@@ -2,11 +2,14 @@ name: NASA to Telegram
 
 on:
   schedule:
-    # Запуск каждый день в 9:00 UTC (12:00 МСК)
+    # Запуск каждый день в 09:00 UTC (12:00 МСК)
     - cron: '0 7 * * *'
-  
-  # Возможность ручного запуска
-  workflow_dispatch:
+  workflow_dispatch: # Ручной запуск
+
+# 👇 ВАЖНО: Даём токену право изменять переменные репозитория
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   send-nasa-photo:
@@ -31,8 +34,7 @@ jobs:
           NASA_API_KEY: ${{ secrets.NASA_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          # 👇 Передаём встроенные переменные GitHub для работы с API
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: python main.py
-      
-      - name: Notify on failure
-        if: failure()
-        run: echo "❌ Ошибка при отправке NASA фото в Telegram"
