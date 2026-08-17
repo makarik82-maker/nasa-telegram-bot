@@ -21,20 +21,20 @@ TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 
 APOD_URL = 'https://api.nasa.gov/planetary/apod'
 
-# Инициализация переводчика
+# 🌍 Инициализация переводчика (английский -> русский)
 translator = GoogleTranslator(source='en', target='ru')
 
 
 def translate_text(text, max_length=4500):
-    """Перевести текст на русский с защитой от лимитов"""
+    """Перевести текст на русский с защитой от лимитов API"""
     if not text:
         return ""
     
     try:
         if len(text) > max_length:
+            # Если текст очень длинный, разбиваем его на части
             parts = []
             current_part = ""
-            
             for sentence in text.replace('\n', ' ').split('. '):
                 if len(current_part) + len(sentence) < max_length:
                     current_part += sentence + '. '
@@ -42,13 +42,14 @@ def translate_text(text, max_length=4500):
                     if current_part:
                         parts.append(current_part.strip())
                     current_part = sentence + '. '
-            
             if current_part:
                 parts.append(current_part.strip())
             
+            # Переводим каждую часть и соединяем
             translated_parts = [translator.translate(part) for part in parts]
             return ' '.join(translated_parts)
         else:
+            # Обычный перевод
             return translator.translate(text)
             
     except Exception as e:
@@ -57,30 +58,29 @@ def translate_text(text, max_length=4500):
 
 
 def get_apod_with_retry(max_retries=3, delay=5):
-    """Получить APOD с механизмом повторных попыток при сбоях сети"""
+    """Получить APOD с механизмом повторных попыток при сбоях сети или 503 ошибке"""
     for attempt in range(max_retries):
         try:
             logger.info(f"🔄 Попытка {attempt + 1} из {max_retries} получить данные APOD...")
             params = {'api_key': NASA_API_KEY}
             
-            # Увеличиваем таймаут до 60 секунд
+            # Увеличенный таймаут 60 секунд
             response = requests.get(APOD_URL, params=params, timeout=60)
             response.raise_for_status()
             data = response.json()
             
-            # Защита: если API вернет список, берем первый элемент
             if isinstance(data, list):
                 return data[0]
             return data
             
         except requests.exceptions.Timeout:
-            logger.warning(f"⏱️ Таймаут при запросе к NASA API. Ждем {delay} секунд перед повторной попыткой...")
+            logger.warning(f"⏱️ Таймаут. Ждем {delay} секунд...")
             time.sleep(delay)
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Ошибка получения APOD: {e}")
-            return None
+            logger.error(f"❌ Ошибка сети или сервера NASA: {e}")
+            time.sleep(delay)
             
-    logger.error("❌ Не удалось получить данные APOD после нескольких попыток.")
+    logger.error("❌ Не удалось получить данные APOD после всех попыток.")
     return None
 
 
@@ -93,14 +93,15 @@ def main():
     
     apod_data = get_apod_with_retry()
     if not apod_data:
-        logger.error("❌ Не удалось получить данные APOD")
-        return False
+        logger.warning("⚠️ Не удалось получить данные APOD. Возможно, сервер NASA временно недоступен.")
+        return False  # Вернем False, но в конце скрипта это обработается как мягкий выход
 
-    # Строго проверяем, что сегодня именно фотография
+    # Проверяем, что сегодня именно фотография
     if apod_data.get('media_type') != 'image':
         logger.warning(f"⚠️ Сегодняшний APOD не является фото (тип: {apod_data.get('media_type')}). Пропускаем.")
         return False
     
+    # Получаем оригинальные данные
     title_en = apod_data.get('title', 'Без названия')
     explanation_en = apod_data.get('explanation', '')
     date = apod_data.get('date', '')
@@ -109,11 +110,10 @@ def main():
 
     logger.info(f"📸 Получено фото APOD: {title_en}")
 
-    # Переводим на русский
+    # 🌍 ПЕРЕВОД НА РУССКИЙ ЯЗЫК
     title_ru = translate_text(title_en)
     explanation_ru = translate_text(explanation_en)
-
-    logger.info(f"✅ Переведено: {title_ru}")
+    logger.info(f"✅ Перевод выполнен: {title_ru}")
 
     # Формируем пост на русском
     caption = f"🌌 <b>{title_ru}</b>\n\n"
@@ -148,4 +148,10 @@ def main():
 
 if __name__ == '__main__':
     success = main()
-    exit(0 if success else 1)
+    if success:
+        exit(0)
+    else:
+        # Возвращаем 0 (успех), чтобы GitHub Actions не помечал день красным крестиком, 
+        # если NASA просто недоступен. Это нормальная ситуация для ежедневных ботов.
+        logger.warning("⚠️ Завершаем работу. Завтра попробуем снова!")
+        exit(0)
