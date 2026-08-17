@@ -14,7 +14,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация
+# Конфигурация из переменных окружения
 NASA_API_KEY = os.getenv('NASA_API_KEY')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
@@ -26,6 +26,7 @@ STATE_VAR_NAME = "LAST_APOD_DATE"
 
 APOD_URL = 'https://api.nasa.gov/planetary/apod'
 
+# 🌍 Инициализация переводчика (английский -> русский)
 translator = GoogleTranslator(source='en', target='ru')
 
 
@@ -44,7 +45,7 @@ def get_last_sent_date():
         response = requests.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json()["value"]
-        return "" # Переменная ещё не создана
+        return ""  # Переменная ещё не создана
     except Exception as e:
         logger.warning(f"⚠️ Не удалось получить последнюю дату: {e}")
         return ""
@@ -75,6 +76,7 @@ def set_last_sent_date(date_str):
 
 
 def translate_text(text, max_length=4500):
+    """Перевести текст на русский с защитой от лимитов API"""
     if not text:
         return ""
     try:
@@ -100,6 +102,7 @@ def translate_text(text, max_length=4500):
 
 
 def get_apod_with_retry(max_retries=3, delay=5):
+    """Получить APOD с механизмом повторных попыток при сбоях сети или 503 ошибке"""
     for attempt in range(max_retries):
         try:
             logger.info(f"🔄 Попытка {attempt + 1} из {max_retries} получить данные APOD...")
@@ -137,14 +140,16 @@ def main():
     last_sent_date = get_last_sent_date()
     if last_sent_date == apod_date:
         logger.info(f"✅ Фото за {apod_date} УЖЕ БЫЛО отправлено ранее. Пропускаем, чтобы не дублировать.")
-        return True # Возвращаем True, чтобы GitHub Actions показал зелёную галочку
+        return True  # Возвращаем True, чтобы GitHub Actions показал зелёную галочку
 
+    # Проверяем, что сегодня именно фотография
     if apod_data.get('media_type') != 'image':
         logger.warning(f"⚠️ Сегодняшний APOD не является фото (тип: {apod_data.get('media_type')}). Пропускаем.")
-        # Сохраняем дату даже для не-фото, чтобы не спамить логами в этот день
+        # Сохраняем дату даже для не-фото, чтобы не спамить в этот день
         set_last_sent_date(apod_date)
         return True
     
+    # Получаем оригинальные данные
     title_en = apod_data.get('title', 'Без названия')
     explanation_en = apod_data.get('explanation', '')
     image_url = apod_data.get('url')
@@ -152,12 +157,16 @@ def main():
 
     logger.info(f"📸 Получено новое фото APOD: {title_en}")
 
+    # 🌍 ПЕРЕВОД НА РУССКИЙ ЯЗЫК
     title_ru = translate_text(title_en)
     explanation_ru = translate_text(explanation_en)
     logger.info(f"✅ Перевод выполнен: {title_ru}")
 
-    caption = f"🌌 <b>{title_ru}</b>\n\n"
+    # 🌟 ФОРМИРОВАНИЕ ПОСТА С НОВЫМ ЗАГОЛОВКОМ
+    caption = "<b>🌌 Кадр дня от NASA</b>\n\n"
+    caption += f"<b>{title_ru}</b>\n\n"
     
+    # Защита от превышения лимита Telegram (1024 символа для подписи к фото)
     max_len = 900
     if len(explanation_ru) > max_len:
         explanation_ru = explanation_ru[:max_len].rsplit(' ', 1)[0] + "..."
@@ -167,6 +176,7 @@ def main():
     if copyright_info:
         caption += f"\n© {copyright_info}"
 
+    # Отправка в Telegram
     try:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         asyncio.run(bot.send_photo(
@@ -191,5 +201,7 @@ if __name__ == '__main__':
     if success:
         exit(0)
     else:
+        # Возвращаем 0 (успех), чтобы GitHub Actions не помечал день красным крестиком,
+        # если NASA просто недоступен. Это нормальная ситуация для ежедневных ботов.
         logger.warning("⚠️ Завершаем работу. Завтра попробуем снова!")
         exit(0)
